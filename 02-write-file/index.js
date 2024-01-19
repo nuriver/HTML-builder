@@ -7,7 +7,6 @@ stdin.on("data", (data) => {
   if (data.toString().trim() === "exit") {
     farewell();
   }
-  if (hadData)
   output.write(data);
 })
 
