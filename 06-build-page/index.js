@@ -1,12 +1,12 @@
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const newFolderPath = path.join(__dirname, 'project-dist');
 const stylesPath = path.join(__dirname, 'styles');
 const componentsPath = path.join(__dirname, 'components');
 const compileStyles = fs.createWriteStream(
-  path.join(__dirname, 'project-dist', 'styles.css'),
+  path.join(__dirname, 'project-dist', 'style.css'),
 );
-const stylesArr = [];
 const templateReading = fs.createReadStream(
   path.join(__dirname, 'template.html'),
 );
@@ -22,86 +22,93 @@ fs.mkdir(newFolderPath, { recursive: true }, (err) => {
 });
 
 // Styles compilation
-fs.readdir(stylesPath, { withFileTypes: true }, (err, files) => {
-  if (err) {
-    console.log(err);
-  } else {
-    let counter = 1;
-    const trueCssArr = files.filter(
-      (file) => path.extname(file.name) === '.css' && file.isFile(),
-    );
-    trueCssArr.forEach((file) => {
-      const readStream = fs.createReadStream(
-        path.join(__dirname, 'styles', `${file.name}`),
-      );
-      readStream.on('data', (data) => {
-        stylesArr.push(data);
-        if (counter >= trueCssArr.length) {
-          stylesArr.forEach((data) => compileStyles.write(data));
-        }
-        counter += 1;
-      });
-    });
-  }
-});
+async function stylesCompiler() {
+  const stylesArr = await fsPromises.readdir(stylesPath, { withFileTypes: true });
+  const trueCssArr = stylesArr.filter((file) => 
+    path.extname(file.name) === '.css' && file.isFile());
+  const cssDataArr = [];
+  let counter = 1;
+  trueCssArr.forEach((file) => {
+    const readStream = fs.createReadStream(
+    path.join(__dirname, 'styles', `${file.name}`),
+    ); 
+    readStream.on('data', (data) => {
+      cssDataArr.push(data);
+      if (counter >= trueCssArr.length) {
+        cssDataArr.forEach((data) => compileStyles.write(`${data}\n`));
+      }
+      counter += 1;
+    })
+  })
+}
+stylesCompiler();
 
 // Template tags replacing in index.html
-fs.readdir(componentsPath, { withFileTypes: true }, (err, files) => {
-  if (err) {
-    console.log(err);
-  } else {
-    // Get data from template.html
-    templateReading.on('data', (data) => {
-      let templateData = data.toString();
+async function htmlTagsReplacer() {
+  const componentsArr = (await fsPromises.readdir(componentsPath, { withFileTypes: true })).filter((file) => path.extname(file.name) === '.html' && file.isFile());
 
-      //Get data from  each of html in components
-      for (let i = 0; i < files.length; i++) {
-        let file = files[i];
-        let trimedName = file.name.replace(path.extname(file.name), '');
-        if (
-          path.extname(file.name) === '.html' &&
-          file.isFile() &&
-          i < files.length
-        ) {
-          let componentReadStream = fs.createReadStream(
-            path.join(componentsPath, `${file.name}`),
-          );
-          componentReadStream.on('data', (data) => {
-            //Replace template tag with data from corresponding html component
-            let indexData = templateData.replace(
-              `{{${trimedName}}}`,
-              data.toString(),
-            );
-            templateData = indexData;
+  templateReading.on('data', (data) => {
+    let templateData = data.toString();
+    let counter = 1;
 
-            // When all tags are replaced place assambled data to index.html
-            if (i === files.length - 1) {
-              indexWriting.write(indexData);
-            }
-          });
-        }
+    componentsArr.forEach((file) => {
+    let trimedName = file.name.replace(path.extname(file.name), '');
+    let componentsReadStream = fs.createReadStream(
+    path.join(componentsPath, `${file.name}`),
+    );
+    componentsReadStream.on('data', (data) => {
+      let indexData = templateData.replace(`{{${trimedName}}}`, `${data.toString()}`)
+      templateData = indexData;
+      if (counter >= componentsArr.length) {
+        indexWriting.write(indexData);
       }
-    });
-  }
-});
+      counter += 1;
+    })
+  })
+  })
+}
+htmlTagsReplacer()
 
 // Copy assets folder
 const sourceAssets = path.join(__dirname, 'assets');
-const distAssets = path.join(newFolderPath, 'assets');
+const destAssets = path.join(newFolderPath, 'assets');
 
-// Create assets folder in project-dist folder
-fs.mkdir(distAssets, { recursive: true }, (err) => {
+function createDir(dir) {
+fs.mkdir(dir, { recursive: true }, (err) => {
   if (err) {
     console.log(err);
   }
 });
+}
 
-function copyDir(sourcePath, distPath) {
-  fs.mkdir(distPath, { recursive: true }, (err) => {
-    if (err) {
-      console.log(err);
+async function isSameFiles(sourcePath, destPath) {
+  try {
+    const sourceFiles = await fsPromises.readdir(sourcePath);
+    const destFiles = await fsPromises.readdir(destPath);
+    destFiles.forEach((file) => {
+      if (!sourceFiles.includes(file)) {
+        fs.unlink(path.join(destPath, file), (err) => {
+          console.log(err);
+        })
+      }
+    })
+  }
+  catch (err) {
+    console.log(err);
+  }
+};
+
+function copyDir(sourcePath, destPath) {
+  fs.access(destPath, err => {
+  if (err) {
+    if (err.code === 'ENOENT') {
+      createDir(destPath);
     }
-  });
+  } else {
+    isSameFiles(sourcePath, destPath);
+  }
+});
+
   fs.readdir(sourcePath, { withFileTypes: true }, (err, files) => {
     if (err) {
       console.log(err);
@@ -109,7 +116,7 @@ function copyDir(sourcePath, distPath) {
       files.forEach((file) => {
         fs.copyFile(
           path.join(sourcePath, `${file.name}`),
-          path.join(distPath, `${file.name}`),
+          path.join(destPath, `${file.name}`),
           (err) => {
             if (err) console.log(err);
           },
@@ -119,14 +126,16 @@ function copyDir(sourcePath, distPath) {
   });
 }
 
+createDir(destAssets);
+
 const fontsSource = path.join(sourceAssets, 'fonts');
-const fontsDist = path.join(distAssets, 'fonts');
+const fontsDist = path.join(destAssets, 'fonts');
 copyDir(fontsSource, fontsDist);
 
 const imgSource = path.join(sourceAssets, 'img');
-const imgDist = path.join(distAssets, 'img');
+const imgDist = path.join(destAssets, 'img');
 copyDir(imgSource, imgDist);
 
 const svgSource = path.join(sourceAssets, 'svg');
-const svgDist = path.join(distAssets, 'svg');
+const svgDist = path.join(destAssets, 'svg');
 copyDir(svgSource, svgDist);
